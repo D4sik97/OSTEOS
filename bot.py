@@ -1,41 +1,54 @@
 import logging
 import os
 import asyncio
+# Убедись, что установлена библиотека motor для асинхронной работы с MongoDB!
+# pip install motor
+import motor.motor_asyncio 
+
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import CommandStart
 from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
-from pymongo import MongoClient
 
-# MongoDB
-API_TOKEN = os.getenv("API_TOKEN")
-
+# Настройка логирования
 logging.basicConfig(level=logging.INFO)
+
+# Получаем токен из переменных окружения
+API_TOKEN = os.getenv("API_TOKEN")
+if not API_TOKEN:
+    logging.error("API_TOKEN environment variable not set!")
+    exit(1)
 
 bot = Bot(token=API_TOKEN)
 dp = Dispatcher()
 
-# --- MongoDB SETUP ---
-MONGO_URL = os.getenv("MONGO_URL")         # получаем строку из переменных окружения
-mongo_client = MongoClient(MONGO_URL)      # создаём клиент MongoDB
-db = mongo_client['telegram_bot']          # теперь работаем с БД
+# --- MongoDB SETUP (ASYNC) ---
+MONGO_URL = os.getenv("MONGO_URL") # получаем строку из переменных окружения
+if not MONGO_URL:
+    logging.error("MONGO_URL environment variable not set!")
+    exit(1)
+    
+# Используем асинхронный клиент Motor
+mongo_client = motor.motor_asyncio.AsyncIOMotorClient(MONGO_URL)
+db = mongo_client['telegram_bot'] 
 user_settings = db['user_settings']
 
-# --- MongoDB language helpers ---
-def set_user_lang(user_id, lang, full_name=None):
-     update = {"lang": lang}
-     if full_name:
+# --- MongoDB language helpers (ASYNC) ---
+# Все функции теперь асинхронные и используют 'await'
+async def set_user_lang(user_id, lang, full_name=None):
+    update = {"lang": lang}
+    if full_name:
         update["full_name"] = full_name
-     user_settings.update_one({"user_id": user_id}, {"$set": update}, upsert=True)
+    await user_settings.update_one({"user_id": user_id}, {"$set": update}, upsert=True)
 
-def get_user_lang(user_id):
-    doc = user_settings.find_one({"user_id": user_id})
-    return doc["lang"] if doc and "lang" in doc else "ru"
+async def get_user_lang(user_id):
+    doc = await user_settings.find_one({"user_id": user_id})
+    return doc.get("lang", "ru") # Используем .get() для безопасного извлечения
 
-def get_user_full_name(user_id):
-    doc = user_settings.find_one({"user_id": user_id})
-    return doc["full_name"] if doc and "full_name" in doc else None
+async def get_user_full_name(user_id):
+    doc = await user_settings.find_one({"user_id": user_id})
+    return doc.get("full_name")
 
-# Լեզվի ընտրության մենյու
+# Լեզվի ընտրության մենյու (Меню выбора языка)
 lang_menu = InlineKeyboardMarkup(
     inline_keyboard=[
         [
@@ -45,7 +58,7 @@ lang_menu = InlineKeyboardMarkup(
     ]
 )
 
-# Գլխավոր մենյու RU
+# Գլխավոր մենյու RU (Главное меню RU)
 menu_ru = InlineKeyboardMarkup(
     inline_keyboard=[
         [
@@ -65,7 +78,7 @@ menu_ru = InlineKeyboardMarkup(
     ]
 )
 
-# Գլխավոր մենյու HY
+# Գլխավոր մենյու HY (Главное меню HY)
 menu_hy = InlineKeyboardMarkup(
     inline_keyboard=[
         [
@@ -85,7 +98,7 @@ menu_hy = InlineKeyboardMarkup(
     ]
 )
 
-# Назад кнопки
+# Назад кнопки (Кнопки "Назад")
 back_btn_ru = InlineKeyboardMarkup(
     inline_keyboard=[[InlineKeyboardButton(text="🔙 Назад", callback_data="btn_back_main")]]
 )
@@ -93,7 +106,7 @@ back_btn_hy = InlineKeyboardMarkup(
     inline_keyboard=[[InlineKeyboardButton(text="🔙 Վերադառնալ", callback_data="btn_back_main")]]
 )
 
-# ՕՍՏԵՈՊԱՏ ենթամենյու RU
+# ՕՍՏԵՈՊԱՏ ենթամենյու RU (Подменю ОСТЕОПАТ RU)
 osteo_submenu_ru = InlineKeyboardMarkup(
     inline_keyboard=[
         [InlineKeyboardButton(text="1. Дисфункции опорно-двигательного аппарата", callback_data="osteo_1")],
@@ -106,7 +119,7 @@ osteo_submenu_ru = InlineKeyboardMarkup(
     ]
 )
 
-# ՕՍՏԵՈՊԱՏ ենթամենյու HY
+# ՕՍՏԵՈՊԱՏ ենթամենյու HY (Подменю ОСТЕОПАТ HY)
 osteo_submenu_hy = InlineKeyboardMarkup(
     inline_keyboard=[
         [InlineKeyboardButton(text="1. Շարժողական համակարգի դիսֆունկցիաներ", callback_data="osteo_1")],
@@ -127,12 +140,13 @@ async def cmd_start(message: Message):
         reply_markup=lang_menu
     )
 
-# Callback լեզվի ընտրություն
+# Callback լեզվի ընտրություն (Callback выбора языка)
 @dp.callback_query(F.data.startswith("lang_"))
 async def set_language(callback: CallbackQuery):
+    # Используем await
     if callback.data == "lang_ru":
-        set_user_lang(callback.from_user.id, "ru", callback.from_user.full_name)
-        await callback.message.answer(
+        await set_user_lang(callback.from_user.id, "ru", callback.from_user.full_name)
+        await callback.message.edit_text( # Используем edit_text для изменения предыдущего сообщения
             f"👋 Привет {callback.from_user.full_name}!\n"
             f"Спасибо за обращение в <b>OSTEOS & KINEZIOS</b>!\n"
             f"Выберите специалиста 👇",
@@ -140,8 +154,8 @@ async def set_language(callback: CallbackQuery):
             parse_mode="HTML"
         )
     elif callback.data == "lang_hy":
-        set_user_lang(callback.from_user.id, "hy", callback.from_user.full_name)
-        await callback.message.answer(
+        await set_user_lang(callback.from_user.id, "hy", callback.from_user.full_name)
+        await callback.message.edit_text( # Используем edit_text для изменения предыдущего сообщения
             f"👋 Բարև {callback.from_user.full_name}!\n"
             f"Շնորհակալություն <b>OSTEOS & KINEZIOS</b>-ին դիմելու համար!\n"
             f"Ընտրեք մասնագետ 👇",
@@ -150,10 +164,12 @@ async def set_language(callback: CallbackQuery):
         )
     await callback.answer()
 
-# Callback մասնագետներ + ՕՍՏԵՈՊԱՏ ենթամենյու
+# Callback մասնագետներ + ՕՍՏԵՈՊԱՏ ենթամենյու (Callback специалистов + подменю ОСТЕОПАТ)
 @dp.callback_query()
 async def handle_buttons(callback: CallbackQuery):
-    lang = get_user_lang(callback.from_user.id) 
+    # Используем await
+    lang = await get_user_lang(callback.from_user.id) 
+    
     # ВРАЧ: БАГДАСАРЯН САРГИС информация
     if callback.data == "btn_prof":
         prof_text_ru = (
@@ -176,9 +192,12 @@ async def handle_buttons(callback: CallbackQuery):
         )
         text = prof_text_ru if lang == "ru" else prof_text_hy
         back_btn = back_btn_ru if lang == "ru" else back_btn_hy
-        await callback.message.answer(text, reply_markup=back_btn, parse_mode="HTML")
+        
+        # Редактируем сообщение, чтобы не спамить
+        await callback.message.edit_text(text, reply_markup=back_btn, parse_mode="HTML")
         await callback.answer()
         return
+        
     # НЕФРОЛОГ информация
     if callback.data == "btn_nephro":
         nephro_text_ru = (
@@ -220,9 +239,11 @@ async def handle_buttons(callback: CallbackQuery):
         )
         text = nephro_text_ru if lang == "ru" else nephro_text_hy
         back_btn = back_btn_ru if lang == "ru" else back_btn_hy
-        await callback.message.answer(text, reply_markup=back_btn, parse_mode="HTML")
+        await callback.message.edit_text(text, reply_markup=back_btn, parse_mode="HTML")
         await callback.answer()
         return
+        
+    # ПСИХОЛОГ-КОНСУ
     # ПСИХОЛОГ-КОНСУЛТАНТ-СЕКСОЛОГ информация
     if callback.data == "btn_psy":
         psy_text_ru = (
